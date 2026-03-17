@@ -1,0 +1,15 @@
+{
+  "id": "db63befe-f48e-4461-b543-cc6738ad3dbd",
+  "subject": "Agent Test",
+  "description": "Testing agent task creation",
+  "active_form": "Testing",
+  "status": "pending",
+  "priority": "high",
+  "blocked_by": [],
+  "blocks": [],
+  "owner": null,
+  "metadata": {},
+  "created_at": "2026-03-17T12:01:45.197730+00:00",
+  "updated_at": "2026-03-17T12:01:45.197734+00:00",
+  "completed_at": null
+}

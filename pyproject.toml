@@ -48,7 +48,8 @@ analysis = [
 ]
 web = [
     "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
+    "uvicorn[standard]>=0.24.0",
+    "sse-starlette>=1.6.0",
 ]
 
 [project.urls]
@@ -58,6 +59,7 @@ Documentation = "https://github.com/fzh-hblab/bioagent/blob/main/docs/README.md"
 
 [project.scripts]
 bioagent = "bioagent.cli:main"
+bioagent-web = "bioagent.web.cli:main"
 
 [tool.setuptools]
 packages = ["bioagent"]

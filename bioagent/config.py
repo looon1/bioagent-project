@@ -85,6 +85,36 @@ class BioAgentConfig:
     max_background_tasks: int = 50            # Maximum retained completed tasks
     background_task_timeout: int = 300         # Default timeout for tool execution (seconds)
 
+    # Context Management Configuration
+    enable_context_compression: bool = True       # Enable context compression system
+    context_max_tokens: int = 50000              # Token threshold for auto_compact
+    compression_threshold: float = 0.8            # Ratio threshold (unused, legacy)
+    context_keep_recent: int = 3                 # Keep last N tool results in micro_compact
+    transcripts_dir: Path = field(default_factory=lambda: Path.cwd() / ".transcripts")
+
+    # Team Protocol Configuration (Phase 7)
+    team_protocol: str = "sequential"             # Team protocol: "sequential", "autonomous", "hierarchical", "swarm"
+    team_name: str = "bioagent_team"            # Team name for protocol communication
+    team_dir: Path = field(default_factory=lambda: Path.cwd() / ".teams")
+    autonomous_poll_interval: float = 5.0           # Seconds between autonomous agent polls
+    idle_timeout: float = 60.0                    # Seconds before autonomous shutdown
+    max_idle_cycles: int = 10                      # Max idle cycles before shutdown
+    health_check_interval: float = 30.0              # Seconds between health checks
+    health_check_timeout: float = 10.0               # Seconds to wait for health response
+    max_missed_health_checks: int = 3              # Missed checks before marking unresponsive
+
+    # Worktree Configuration (Phase 8)
+    enable_worktree: bool = True                 # Enable worktree isolation system
+    worktrees_dir: Path = field(default_factory=lambda: Path.cwd() / ".worktrees")
+    worktree_timeout: int = 300                   # Default timeout for worktree commands (seconds)
+    worktree_retention_days: int = 7             # Number of days to retain removed worktrees
+
+    # Web UI Configuration (Phase 9)
+    web_host: str = "0.0.0.0"              # Host to bind web server
+    web_port: int = 7860                       # Port for web server
+    enable_cors: bool = True                     # Enable CORS for frontend
+    sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".sessions")  # Web session storage
+
     @classmethod
     def from_env(cls) -> "BioAgentConfig":
         """Load configuration from environment variables."""
@@ -183,6 +213,59 @@ class BioAgentConfig:
         if bg_timeout := os.getenv("BIOAGENT_BACKGROUND_TASK_TIMEOUT"):
             config.background_task_timeout = int(bg_timeout)
 
+        # Context management settings
+        if enable_compression := os.getenv("BIOAGENT_ENABLE_CONTEXT_COMPRESSION"):
+            config.enable_context_compression = enable_compression.lower() in ("true", "1", "yes")
+        if max_tokens := os.getenv("BIOAGENT_CONTEXT_MAX_TOKENS"):
+            config.context_max_tokens = int(max_tokens)
+        if compression_ratio := os.getenv("BIOAGENT_COMPRESSION_THRESHOLD"):
+            config.compression_threshold = float(compression_ratio)
+        if keep_recent := os.getenv("BIOAGENT_CONTEXT_KEEP_RECENT"):
+            config.context_keep_recent = int(keep_recent)
+        if transcripts_dir := os.getenv("BIOAGENT_TRANSCRIPTS_DIR"):
+            config.transcripts_dir = Path(transcripts_dir)
+
+        # Team protocol settings
+        if team_protocol := os.getenv("BIOAGENT_TEAM_PROTOCOL"):
+            if team_protocol in ("sequential", "autonomous", "hierarchical", "swarm"):
+                config.team_protocol = team_protocol
+        if team_name := os.getenv("BIOAGENT_TEAM_NAME"):
+            config.team_name = team_name
+        if team_dir := os.getenv("BIOAGENT_TEAM_DIR"):
+            config.team_dir = Path(team_dir)
+        if poll_interval := os.getenv("BIOAGENT_AUTONOMOUS_POLL_INTERVAL"):
+            config.autonomous_poll_interval = float(poll_interval)
+        if idle_timeout := os.getenv("BIOAGENT_IDLE_TIMEOUT"):
+            config.idle_timeout = float(idle_timeout)
+        if max_idle := os.getenv("BIOAGENT_MAX_IDLE_CYCLES"):
+            config.max_idle_cycles = int(max_idle)
+        if health_interval := os.getenv("BIOAGENT_HEALTH_CHECK_INTERVAL"):
+            config.health_check_interval = float(health_interval)
+        if health_timeout := os.getenv("BIOAGENT_HEALTH_CHECK_TIMEOUT"):
+            config.health_check_timeout = float(health_timeout)
+        if max_missed := os.getenv("BIOAGENT_MAX_MISSED_HEALTH_CHECKS"):
+            config.max_missed_health_checks = int(max_missed)
+
+        # Worktree settings
+        if enable_wt := os.getenv("BIOAGENT_ENABLE_WORKTREE"):
+            config.enable_worktree = enable_wt.lower() in ("true", "1", "yes")
+        if worktrees_dir := os.getenv("BIOAGENT_WORKTREES_DIR"):
+            config.worktrees_dir = Path(worktrees_dir)
+        if wt_timeout := os.getenv("BIOAGENT_WORKTREE_TIMEOUT"):
+            config.worktree_timeout = int(wt_timeout)
+        if wt_retention := os.getenv("BIOAGENT_WORKTREE_RETENTION_DAYS"):
+            config.worktree_retention_days = int(wt_retention)
+
+        # Web UI settings
+        if web_host := os.getenv("BIOAGENT_WEB_HOST"):
+            config.web_host = web_host
+        if web_port := os.getenv("BIOAGENT_WEB_PORT"):
+            config.web_port = int(web_port)
+        if enable_cors := os.getenv("BIOAGENT_ENABLE_CORS"):
+            config.enable_cors = enable_cors.lower() in ("true", "1", "yes")
+        if sessions_dir := os.getenv("BIOAGENT_SESSIONS_DIR"):
+            config.sessions_dir = Path(sessions_dir)
+
         return config
 
     def validate(self) -> None:
@@ -205,6 +288,21 @@ class BioAgentConfig:
         # Create tasks directory if task tracking is enabled
         if self.enable_task_tracking:
             self.tasks_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create transcripts directory if context compression is enabled
+        if self.enable_context_compression:
+            self.transcripts_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create team directory if team protocol is enabled
+        if self.enable_multi_agent:
+            self.team_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create worktrees directory if worktree is enabled
+        if self.enable_worktree:
+            self.worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create sessions directory for web UI
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
         # Validate multi-agent mode
         if self.agent_team_mode != "single" and not self.enable_multi_agent:

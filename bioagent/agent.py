@@ -23,6 +23,8 @@ from bioagent.observability import Logger, Metrics, CostTracker
 from bioagent.tasks.manager import TaskManager
 from bioagent.tasks.todo import TodoWrite
 from bioagent.background.manager import BackgroundTaskManager
+from bioagent.worktree.manager import WorktreeManager, EventBus
+from bioagent.worktree.coordinator import WorktreeCoordinator
 
 
 class Agent:
@@ -89,8 +91,23 @@ class Agent:
             from bioagent.agents.factory import SimpleAgentFactory
             self.agent_factory = SimpleAgentFactory(self.config, self.logger)
 
+        # Context management system
+        self.context_manager = None
+        if self.config.enable_context_compression:
+            self._load_context_system()
+
+        # Worktree system
+        self.worktree_manager: Optional[WorktreeManager] = None
+        self.worktree_coordinator: Optional[WorktreeCoordinator] = None
+        if self.config.enable_worktree:
+            self._load_worktree_system()
+
         # LLM Provider
         self.llm = get_llm_provider(self.config)
+
+        # Set LLM provider for context manager (needed for summarization)
+        if self.context_manager:
+            self.context_manager.set_llm_provider(self.llm)
 
         self.logger.info(
             f"Agent initialized",
@@ -339,6 +356,276 @@ class Agent:
 
         self.logger.debug("Registered background task management tools")
 
+    def _load_context_system(self) -> None:
+        """Initialize context manager if enabled."""
+        try:
+            from bioagent.context import ContextManager
+
+            self.context_manager = ContextManager(self.config, self.logger)
+            self.logger.info(
+                "Context management initialized",
+                max_tokens=self.config.context_max_tokens,
+                keep_recent=self.config.context_keep_recent,
+                transcripts_dir=str(self.config.transcripts_dir)
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize context system: {e}")
+            self.context_manager = None
+
+    def _load_worktree_system(self) -> None:
+        """Initialize worktree system if enabled."""
+        try:
+            # Detect repo root
+            repo_root = self._detect_repo_root()
+
+            # Initialize WorktreeManager
+            self.worktree_manager = WorktreeManager(
+                repo_root=repo_root,
+                tasks_dir=self.config.tasks_dir,
+                worktrees_dir=self.config.worktrees_dir,
+                logger=self.logger
+            )
+
+            # Initialize WorktreeCoordinator
+            self.worktree_coordinator = WorktreeCoordinator(
+                self.worktree_manager,
+                self.logger
+            )
+
+            # Register worktree tools
+            self._register_worktree_tools()
+
+            self.logger.info(
+                "Worktree system initialized",
+                repo_root=str(repo_root),
+                worktrees_dir=str(self.config.worktrees_dir)
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize worktree system: {e}")
+            self.worktree_manager = None
+            self.worktree_coordinator = None
+
+    def _detect_repo_root(self) -> Path:
+        """
+        Detect git repository root.
+
+        Returns:
+            Path to repo root or current directory if not in git repo
+        """
+        try:
+            import subprocess
+            r = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=Path.cwd(),
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if r.returncode == 0:
+                root = Path(r.stdout.strip())
+                return root if root.exists() else Path.cwd()
+        except Exception:
+            pass
+        return Path.cwd()
+
+    def _register_worktree_tools(self) -> None:
+        """Register worktree management tools."""
+        from bioagent.tools.base import tool
+
+        # Register worktree_create tool
+        @tool(domain="worktree")
+        async def wt_create(
+            name: str,
+            task_id: Optional[str] = None,
+            base_ref: str = "HEAD"
+        ) -> Dict[str, Any]:
+            """
+            Create a new git worktree and optionally bind it to a task.
+
+            Worktrees provide isolated directories for parallel task execution.
+            Use worktrees when working on multiple tasks simultaneously to avoid conflicts.
+
+            Args:
+                name: Worktree name (1-40 chars: letters, numbers, ., _, -)
+                task_id: Optional task ID to bind the worktree to
+                base_ref: Git reference to create worktree from (default: HEAD)
+
+            Returns:
+                Dictionary with worktree information
+            """
+            if self.worktree_manager is None:
+                return {"error": "Worktree system is not enabled"}
+            return self.worktree_manager.create(name, task_id, base_ref)
+
+        # Register worktree_list tool
+        @tool(domain="worktree")
+        async def wt_list() -> Dict[str, Any]:
+            """
+            List all worktrees tracked in the index.
+
+            Use this to see what worktrees exist and their status.
+
+            Returns:
+                Dictionary with list of worktrees and their details
+            """
+            if self.worktree_manager is None:
+                return {"error": "Worktree system is not enabled"}
+            return {"worktrees": self.worktree_manager.list_all()}
+
+        # Register worktree_get tool
+        @tool(domain="worktree")
+        async def wt_get(name: str) -> Dict[str, Any]:
+            """
+            Get detailed information about a specific worktree.
+
+            Args:
+                name: Worktree name
+
+            Returns:
+                Worktree dictionary with full details or error if not found
+            """
+            if self.worktree_manager is None:
+                return {"error": "Worktree system is not enabled"}
+            result = self.worktree_manager.get(name)
+            return result or {"error": f"Worktree '{name}' not found"}
+
+        # Register worktree_status tool
+        @tool(domain="worktree")
+        async def wt_status(name: str) -> str:
+            """
+            Show git status for a worktree.
+
+            Use this to check what changes exist in a worktree.
+
+            Args:
+                name: Worktree name
+
+            Returns:
+                Git status output showing modified/added/deleted files
+            """
+            if self.worktree_manager is None:
+                return "Error: Worktree system is not enabled"
+            return self.worktree_manager.status(name)
+
+        # Register worktree_run tool
+        @tool(domain="worktree")
+        async def wt_run(
+            name: str,
+            command: str,
+            timeout: int = 300
+        ) -> str:
+            """
+            Run a shell command in a worktree directory.
+
+            Use this to execute commands within an isolated worktree context.
+
+            Args:
+                name: Worktree name to run command in
+                command: Shell command to execute
+                timeout: Command timeout in seconds (default: 300)
+
+            Returns:
+                Command output (stdout + stderr), or error message
+            """
+            if self.worktree_manager is None:
+                return "Error: Worktree system is not enabled"
+            return self.worktree_manager.run(name, command, timeout)
+
+        # Register worktree_remove tool
+        @tool(domain="worktree")
+        async def wt_remove(
+            name: str,
+            force: bool = False,
+            complete_task: bool = False
+        ) -> str:
+            """
+            Remove a worktree and optionally complete its bound task.
+
+            Use this to clean up a worktree after work is done.
+            Setting complete_task=True will also mark the bound task as completed.
+
+            Args:
+                name: Worktree name to remove
+                force: Force removal even if worktree has uncommitted changes
+                complete_task: If True, mark the bound task as completed
+
+            Returns:
+                Status message confirming removal
+            """
+            if self.worktree_manager is None:
+                return "Error: Worktree system is not enabled"
+            try:
+                return self.worktree_manager.remove(name, force, complete_task)
+            except Exception as e:
+                return f"Error: {e}"
+
+        # Register worktree_keep tool
+        @tool(domain="worktree")
+        async def wt_keep(name: str) -> Dict[str, Any]:
+            """
+            Mark a worktree as kept without removing it.
+
+            Use this to preserve a worktree for later use (e.g., for code review).
+
+            Args:
+                name: Worktree name to keep
+
+            Returns:
+                Updated worktree dictionary with status="kept"
+            """
+            if self.worktree_manager is None:
+                return {"error": "Worktree system is not enabled"}
+            try:
+                return self.worktree_manager.keep(name)
+            except Exception as e:
+                return {"error": str(e)}
+
+        # Register worktree_events tool
+        @tool(domain="worktree")
+        async def wt_events(limit: int = 20) -> str:
+            """
+            List recent worktree lifecycle events.
+
+            Use this to see the history of worktree and task operations.
+
+            Args:
+                limit: Maximum number of events to return (default: 20)
+
+            Returns:
+                JSON string of recent events
+            """
+            if self.worktree_manager is None:
+                return "[]"
+            return self.worktree_manager.list_events(limit)
+
+        # Register worktree_summary tool
+        @tool(domain="worktree")
+        async def wt_summary() -> Dict[str, Any]:
+            """
+            Get a summary of all worktrees.
+
+            Use this to quickly see worktree statistics.
+
+            Returns:
+                Dictionary with worktree counts by status
+            """
+            if self.worktree_manager is None:
+                return {"error": "Worktree system is not enabled"}
+            return self.worktree_manager.get_summary()
+
+        # Register worktree tools
+        self.tool_registry.register(wt_create)
+        self.tool_registry.register(wt_list)
+        self.tool_registry.register(wt_get)
+        self.tool_registry.register(wt_status)
+        self.tool_registry.register(wt_run)
+        self.tool_registry.register(wt_remove)
+        self.tool_registry.register(wt_keep)
+        self.tool_registry.register(wt_events)
+        self.tool_registry.register(wt_summary)
+
+        self.logger.debug("Registered worktree management tools")
+
     def register_tool(self, tool_func) -> None:
         """
         Register a custom tool to the registry.
@@ -501,6 +788,10 @@ class Agent:
                     session_id=self.session_id,
                 )
 
+        # Apply micro_compact before LLM call (Layer 1)
+        if self.context_manager:
+            messages = self.context_manager.micro_compact(messages)
+
         iteration = 0
         max_iterations = self.config.max_tool_iterations
 
@@ -597,6 +888,25 @@ class Agent:
             self.state.status = AgentStatus.EXECUTING_TOOL
 
             for tool_call in response.tool_calls:
+                # Handle compact tool specially (Layer 3 - manual compact)
+                if tool_call.name == "compact":
+                    focus = tool_call.arguments.get("focus", "")
+                    self.logger.info(
+                        "Manual compact tool triggered",
+                        focus=focus,
+                        session_id=self.session_id
+                    )
+                    if self.context_manager:
+                        messages = await self.context_manager.manual_compress(messages, focus)
+                    # Add acknowledgment message
+                    messages.append(LLMMessage(
+                        role="tool",
+                        content="Context compressed successfully.",
+                        tool_call_id=tool_call.id
+                    ))
+                    continue
+
+                # Check for redundant tool calls
                 # Check for redundant tool calls
                 if self._is_redundant_call(tool_call.name, tool_call.arguments):
                     self.logger.warning(
@@ -670,6 +980,14 @@ class Agent:
                     content=result_str,
                     tool_call_id=tool_call.id
                 ))
+
+            # Check if auto_compact needed after each tool execution (Layer 2)
+            if self.context_manager and self.context_manager.should_compress(messages):
+                self.logger.info(
+                    "Auto compression triggered",
+                    session_id=self.session_id
+                )
+                messages = await self.context_manager.auto_compress(messages)
 
         # Max iterations reached
         return "I reached the maximum number of tool iterations. Please provide more specific instructions."
@@ -907,6 +1225,26 @@ class Agent:
         summary = self.task_manager.get_summary()
         summary["enabled"] = True
         summary["tasks_dir"] = str(self.config.tasks_dir)
+
+        return summary
+
+    def get_worktree_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of all worktrees.
+
+        Returns:
+            Dictionary with worktree statistics and enabled status
+        """
+        if not self.worktree_manager:
+            return {
+                "enabled": False,
+                "message": "Worktree system is not enabled"
+            }
+
+        summary = self.worktree_manager.get_summary()
+        summary["enabled"] = True
+        summary["worktrees_dir"] = str(self.config.worktrees_dir)
+        summary["git_available"] = self.worktree_manager.git_available
 
         return summary
 
