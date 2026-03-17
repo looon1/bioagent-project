@@ -73,6 +73,13 @@ class BioAgentConfig:
     auto_delegate_threshold: int = 0.5          # Complexity score threshold (0-1)
     log_delegation_decision: bool = True       # Log delegation decisions
 
+    # Task System Configuration
+    enable_task_tracking: bool = True          # Enable task tracking system
+    tasks_dir: Path = field(default_factory=lambda: Path.cwd() / ".tasks")
+    auto_resolve_dependencies: bool = True     # Auto-resolve dependencies when tasks complete
+    task_completion_cleanup: bool = True       # Auto-delete completed tasks after retention period
+    task_retention_days: int = 7               # Number of days to retain completed tasks
+
     @classmethod
     def from_env(cls) -> "BioAgentConfig":
         """Load configuration from environment variables."""
@@ -151,6 +158,18 @@ class BioAgentConfig:
         if log_decision := os.getenv("BIOAGENT_LOG_DELEGATION_DECISION"):
             config.log_delegation_decision = log_decision.lower() in ("true", "1", "yes")
 
+        # Task system settings
+        if enable_tasks := os.getenv("BIOAGENT_ENABLE_TASK_TRACKING"):
+            config.enable_task_tracking = enable_tasks.lower() in ("true", "1", "yes")
+        if tasks_dir := os.getenv("BIOAGENT_TASKS_DIR"):
+            config.tasks_dir = Path(tasks_dir)
+        if auto_resolve := os.getenv("BIOAGENT_AUTO_RESOLVE_DEPENDENCIES"):
+            config.auto_resolve_dependencies = auto_resolve.lower() in ("true", "1", "yes")
+        if task_cleanup := os.getenv("BIOAGENT_TASK_COMPLETION_CLEANUP"):
+            config.task_completion_cleanup = task_cleanup.lower() in ("true", "1", "yes")
+        if retention_days := os.getenv("BIOAGENT_TASK_RETENTION_DAYS"):
+            config.task_retention_days = int(retention_days)
+
         return config
 
     def validate(self) -> None:
@@ -169,6 +188,10 @@ class BioAgentConfig:
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self.tools_domains_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create tasks directory if task tracking is enabled
+        if self.enable_task_tracking:
+            self.tasks_dir.mkdir(parents=True, exist_ok=True)
 
         # Validate multi-agent mode
         if self.agent_team_mode != "single" and not self.enable_multi_agent:

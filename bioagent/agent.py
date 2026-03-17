@@ -20,6 +20,8 @@ from bioagent.tools.loader import ToolLoader
 from bioagent.tools.adapter import ToolAdapter, BiomniToolAdapter
 from bioagent.tools.base import ToolInfo
 from bioagent.observability import Logger, Metrics, CostTracker
+from bioagent.tasks.manager import TaskManager
+from bioagent.tasks.todo import TodoWrite
 
 
 class Agent:
@@ -67,6 +69,12 @@ class Agent:
         self.loader = ToolLoader(self.tool_registry)
         self.tool_adapter: Optional[ToolAdapter] = None
         self._load_tools()
+
+        # Task system
+        self.task_manager: Optional[TaskManager] = None
+        self.todo: Optional[TodoWrite] = None
+        if self.config.enable_task_tracking:
+            self._load_task_system()
 
         # Simple multi-agent factory
         self.agent_factory: Optional["SimpleAgentFactory"] = None
@@ -125,6 +133,123 @@ class Agent:
         except Exception as e:
             self.logger.warning(f"Failed to load Biomni tools: {e}")
             self.tool_adapter = None
+
+    def _load_task_system(self) -> None:
+        """Initialize the task system if enabled."""
+        try:
+            # Create tasks directory if it doesn't exist
+            self.config.tasks_dir.mkdir(parents=True, exist_ok=True)
+
+            # Initialize TaskManager
+            self.task_manager = TaskManager(self.config.tasks_dir, self.logger)
+
+            # Initialize TodoWrite
+            self.todo = TodoWrite(self.task_manager, self.logger)
+
+            # Register task tools
+            self._register_task_tools()
+
+            self.logger.info(
+                f"Task system initialized with {self.config.tasks_dir}",
+                tasks_dir=str(self.config.tasks_dir)
+            )
+
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize task system: {e}")
+            self.task_manager = None
+            self.todo = None
+
+    def _register_task_tools(self) -> None:
+        """Register task management tools."""
+        from bioagent.tools.base import tool
+
+        @tool(domain="tasks")
+        async def create_task(subject: str, description: str,
+                             active_form: str = "", priority: str = "medium",
+                             persist: bool = True) -> Dict[str, Any]:
+            """
+            Create a new task for tracking work.
+
+            Use this tool when you need to plan or track multiple steps of work.
+
+            Args:
+                subject: Brief title of the task (max 100 chars)
+                description: Detailed description of what needs to be done
+                active_form: Present continuous form for display (e.g., "Analyzing data")
+                priority: Priority level (low, medium, high, critical)
+                persist: Whether to persist the task to disk
+
+            Returns:
+                Dictionary with task ID and details
+            """
+            if self.todo is None:
+                return {"error": "Task system is not enabled"}
+            return self.todo.create(subject, description, active_form, priority, persist)
+
+        @tool(domain="tasks")
+        async def update_task(task_id: str, status: Optional[str] = None,
+                             priority: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Update an existing task's status or priority.
+
+            Use this tool to mark tasks as completed or change their priority.
+
+            Args:
+                task_id: Unique identifier of the task to update
+                status: New status (pending, in_progress, completed, failed)
+                priority: New priority (low, medium, high, critical)
+
+            Returns:
+                Updated task dictionary
+            """
+            if self.todo is None:
+                return {"error": "Task system is not enabled"}
+            return self.todo.update(task_id, status, priority)
+
+        @tool(domain="tasks")
+        async def list_tasks(status: Optional[str] = None,
+                            priority: Optional[str] = None) -> List[Dict[str, Any]]:
+            """
+            List all tasks with optional filtering.
+
+            Use this tool to see what tasks are currently tracked.
+
+            Args:
+                status: Filter by status (pending, in_progress, completed, failed)
+                priority: Filter by priority (low, medium, high, critical)
+
+            Returns:
+                List of task dictionaries
+            """
+            if self.todo is None:
+                return []
+            return self.todo.list_all(status, priority)
+
+        @tool(domain="tasks")
+        async def get_task(task_id: str) -> Dict[str, Any]:
+            """
+            Get detailed information about a specific task.
+
+            Use this tool to get full details including dependencies.
+
+            Args:
+                task_id: Unique identifier of the task
+
+            Returns:
+                Task dictionary with all details
+            """
+            if self.todo is None:
+                return {"error": "Task system is not enabled"}
+            result = self.todo.get(task_id)
+            return result or {"error": f"Task {task_id} not found"}
+
+        # Register the task tools
+        self.tool_registry.register(create_task)
+        self.tool_registry.register(update_task)
+        self.tool_registry.register(list_tasks)
+        self.tool_registry.register(get_task)
+
+        self.logger.debug("Registered task management tools")
 
     def register_tool(self, tool_func) -> None:
         """
@@ -656,6 +781,80 @@ class Agent:
                 summary += f"- {fail.tool_name}: {fail.error}\n"
 
         return summary.strip()
+
+    def get_tasks_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of all tracked tasks.
+
+        Returns:
+            Dictionary with task statistics and enabled status
+        """
+        if not self.task_manager:
+            return {
+                "enabled": False,
+                "message": "Task system is not enabled"
+            }
+
+        summary = self.task_manager.get_summary()
+        summary["enabled"] = True
+        summary["tasks_dir"] = str(self.config.tasks_dir)
+
+        return summary
+
+    def create_agent_task(
+        self,
+        subject: str,
+        description: str,
+        active_form: str = "",
+        priority: str = "medium",
+    ) -> Optional[str]:
+        """
+        Create a task for the agent's own tracking.
+
+        This is a convenience method for creating tasks directly
+        without going through the tool system.
+
+        Args:
+            subject: Brief title of the task
+            description: Detailed description of the task
+            active_form: Present continuous form for display
+            priority: Priority level (low, medium, high, critical)
+
+        Returns:
+            Task ID if created, None if task system is disabled
+        """
+        if not self.task_manager or not self.todo:
+            self.logger.warning("Cannot create task: task system is not enabled")
+            return None
+
+        result = self.todo.create(
+            subject=subject,
+            description=description,
+            active_form=active_form,
+            priority=priority,
+            persist=True,
+        )
+
+        return result.get("id")
+
+    def update_agent_task(self, task_id: str, status: Optional[str] = None,
+                          priority: Optional[str] = None) -> Optional[str]:
+        """
+        Update an agent task.
+
+        Args:
+            task_id: Unique identifier of the task
+            status: New status if provided
+            priority: New priority if provided
+
+        Returns:
+            Task ID if updated, None if task system is disabled
+        """
+        if not self.todo:
+            return None
+
+        result = self.todo.update(task_id, status, priority)
+        return task_id if result else None
 
     def reset(self) -> None:
         """Reset the agent state for a new session."""
