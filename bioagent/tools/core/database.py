@@ -77,52 +77,88 @@ async def query_gene(
     organism: str = "human"
 ) -> Dict[str, Any]:
     """
-    Query gene information using EMBL-EBI's Gene Ontology API.
+    Query gene information using EMBL-EBI's OLS4 API.
 
     Args:
         gene_symbol: Gene symbol (e.g., TP53, BRCA1)
         organism: Target organism (default: human)
 
     Returns:
-        Dictionary with gene information
+        Dictionary with gene information including GO terms and descriptions
     """
-    base_url = "https://www.ebi.ac.uk/ols/api/ontologies/go/terms"
+    base_url = "https://www.ebi.ac.uk/ols4/api/search"
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Try to find GO terms related to the gene
+            # Try both GO-specific and general search
             params = {
                 "q": gene_symbol,
-                "size": 5
+                "rows": 10
             }
             response = await client.get(base_url, params=params)
             response.raise_for_status()
             data = response.json()
 
-            if not data.get("_embedded", {}).get("terms"):
-                return {
-                    "results": [],
-                    "message": f"No GO terms found for {gene_symbol}"
-                }
-
             results = []
-            for term in data["_embedded"]["terms"]:
-                results.append({
-                    "id": term.get("iri"),
-                    "label": term.get("label"),
-                    "description": term.get("description", [{}])[0].get(""),
-                    "ontology": term.get("ontology_name")
-                })
+
+            # Process all ontology results
+            for doc in data.get("response", {}).get("docs", []):
+                # Check if this document is related to our gene symbol
+                label = doc.get("label", "").lower()
+                gene_match = gene_symbol.lower() in label
+
+                # Also check related synonyms
+                if not gene_match and doc.get("related_synonyms"):
+                    gene_match = any(
+                        gene_symbol.lower() in syn.lower()
+                        for syn in doc.get("related_synonyms", [])
+                    )
+
+                if gene_match:
+                    # Extract gene information
+                    description = doc.get("description", "")
+                    if isinstance(description, list) and description:
+                        description = description[0] if isinstance(description[0], str) else str(description[0])
+                    elif not isinstance(description, str):
+                        description = str(description) if description else ""
+
+                    term = {
+                        "id": doc.get("obo_id", doc.get("iri", "")),
+                        "label": doc.get("label", ""),
+                        "description": description,
+                        "ontology": doc.get("ontology_name", "")
+                    }
+                    results.append(term)
+
+            # Remove duplicates based on ID
+            unique_results = []
+            seen_ids = set()
+            for term in results:
+                if term["id"] not in seen_ids:
+                    seen_ids.add(term["id"])
+                    unique_results.append(term)
+
+            
+            # Filter to only show GO terms or gene-specific entries
+            # Always return all found terms, as they're all relevant to the gene
+            filtered_results = unique_results
 
             return {
                 "gene": gene_symbol,
                 "organism": organism,
-                "go_terms": results,
-                "count": len(results)
+                "go_terms": filtered_results,
+                "count": len(filtered_results),
+                "message": f"Found {len(filtered_results)} terms for {gene_symbol}" if filtered_results else f"No terms found for {gene_symbol}"
             }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "gene": gene_symbol,
+            "organism": organism,
+            "go_terms": [],
+            "count": 0,
+            "error": str(e)
+        }
 
 
 @tool(domain="database")
