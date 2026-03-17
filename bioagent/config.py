@@ -80,6 +80,11 @@ class BioAgentConfig:
     task_completion_cleanup: bool = True       # Auto-delete completed tasks after retention period
     task_retention_days: int = 7               # Number of days to retain completed tasks
 
+    # Background Tasks Configuration
+    enable_background_tasks: bool = True         # Enable background task system
+    max_background_tasks: int = 50            # Maximum retained completed tasks
+    background_task_timeout: int = 300         # Default timeout for tool execution (seconds)
+
     @classmethod
     def from_env(cls) -> "BioAgentConfig":
         """Load configuration from environment variables."""
@@ -169,6 +174,14 @@ class BioAgentConfig:
             config.task_completion_cleanup = task_cleanup.lower() in ("true", "1", "yes")
         if retention_days := os.getenv("BIOAGENT_TASK_RETENTION_DAYS"):
             config.task_retention_days = int(retention_days)
+
+        # Background task settings
+        if enable_bg := os.getenv("BIOAGENT_ENABLE_BACKGROUND_TASKS"):
+            config.enable_background_tasks = enable_bg.lower() in ("true", "1", "yes")
+        if max_bg := os.getenv("BIOAGENT_MAX_BACKGROUND_TASKS"):
+            config.max_background_tasks = int(max_bg)
+        if bg_timeout := os.getenv("BIOAGENT_BACKGROUND_TASK_TIMEOUT"):
+            config.background_task_timeout = int(bg_timeout)
 
         return config
 

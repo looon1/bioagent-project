@@ -14,8 +14,8 @@
 | Phase 1: 基础循环 | ✅ 已完成 | 100% |
 | Phase 2: 多智能体团队 | ✅ 已完成 | 100% |
 | Phase 3: 自动委托 | ✅ 已完成 | 100% |
-| Phase 4: 任务系统 | 🟡 进行中 | 0% |
-| Phase 5: 后台任务 | ❌ 未开始 | 0% |
+| Phase 4: 任务系统 | ✅ 已完成 | 100% |
+| Phase 5: 后台任务 | ✅ 已完成 | 100% |
 | Phase 6: 上下文管理 | ❌ 未开始 | 0% |
 | Phase 7: 高级团队协议 | ❌ 未开始 | 0% |
 | Phase 8: Worktree 隔离 | ❌ 未开始 | 0% |
@@ -99,28 +99,28 @@ bioagent/
 
 ---
 
-## Phase 5: 后台任务 (参考: s08, PantheonOS background.py)
+## Phase 5: 后台任务 ✅ 已完成
 
 ### 5.1 后台任务管理器
-- [ ] 实现 `BackgroundTaskManager` 类
-- [ ] 任务创建、跟踪、状态管理
-- [ ] 异步任务执行
-- [ ] 完成通知队列
-- [ ] 任务取消和清理
+- [x] 实现 `BackgroundTaskManager` 类
+- [x] 任务创建、跟踪、状态管理
+- [x] 异步任务执行
+- [x] 完成通知队列
+- [x] 任务取消和清理
 
 **参考：** `PantheonOS/pantheon/background.py`
 
 ### 5.2 输出捕获机制
-- [ ] 实现 `_bg_output_buffer` ContextVar
-- [ ] 安装 print hook (monkeypatch)
-- [ ] 可靠的 stdout 捕获
-- [ ] 输出缓冲到任务对象
+- [x] 实现 `_bg_output_buffer` ContextVar
+- [x] 安装 print hook (monkeypatch)
+- [x] 可靠的 stdout 捕获
+- [x] 输出缓冲到任务对象
 
 ### 5.3 集成到 Agent
-- [ ] 在 `Agent` 类中集成 `BackgroundTaskManager`
-- [ ] 添加 `run_background` 工具
-- [ ] 超时处理和任务迁移
-- [ ] 后台任务状态查询工具
+- [x] 在 `Agent` 类中集成 `BackgroundTaskManager`
+- [x] 添加 `run_background` 工具
+- [x] 超时处理和任务迁移
+- [x] 后台任务状态查询工具
 
 **文件结构：**
 ```
@@ -128,8 +128,7 @@ bioagent/
 ├── background/
 │   ├── __init__.py
 │   ├── manager.py       # BackgroundTaskManager
-│   ├── capture.py       # 输出捕获机制
-│   └── task.py         # BackgroundTask 数据类
+│   └── capture.py       # 输出捕获机制
 ```
 
 ---
@@ -428,4 +427,4 @@ sse-starlette = "^1.6"
 
 ---
 
-**最后更新：** 2026-03-17
+**最后更新：** 2026-03-17 (Phase 5 已完成)

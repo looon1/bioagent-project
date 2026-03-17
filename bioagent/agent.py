@@ -22,6 +22,7 @@ from bioagent.tools.base import ToolInfo
 from bioagent.observability import Logger, Metrics, CostTracker
 from bioagent.tasks.manager import TaskManager
 from bioagent.tasks.todo import TodoWrite
+from bioagent.background.manager import BackgroundTaskManager
 
 
 class Agent:
@@ -75,6 +76,11 @@ class Agent:
         self.todo: Optional[TodoWrite] = None
         if self.config.enable_task_tracking:
             self._load_task_system()
+
+        # Background task system
+        self.bg_manager: Optional[BackgroundTaskManager] = None
+        if self.config.enable_background_tasks:
+            self._load_background_system()
 
         # Simple multi-agent factory
         self.agent_factory: Optional["SimpleAgentFactory"] = None
@@ -251,6 +257,88 @@ class Agent:
 
         self.logger.debug("Registered task management tools")
 
+    def _load_background_system(self) -> None:
+        """Initialize background task system if enabled."""
+        try:
+            # Initialize BackgroundTaskManager
+            self.bg_manager = BackgroundTaskManager(
+                max_retained=self.config.max_background_tasks,
+                logger=self.logger,
+            )
+
+            # Register background tools
+            self._register_background_tools()
+
+            self.logger.info(
+                "Background task system initialized",
+                max_retained=self.config.max_background_tasks,
+            )
+
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize background system: {e}")
+            self.bg_manager = None
+
+    def _register_background_tools(self) -> None:
+        """Register background task management tools."""
+        from bioagent.tools.base import tool
+        from bioagent.tools.core.background import (
+            run_background,
+            check_background,
+            cancel_background,
+        )
+
+        # Register run_background tool (manual registration to inject context)
+        @tool(domain="background")
+        async def bg_run_background(tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+            """
+            Run a tool in the background without blocking.
+
+            Use this for long-running operations that should not block the agent.
+
+            Args:
+                tool_name: Name of the tool to run in background
+                tool_args: Arguments to pass to the tool (as a dictionary)
+
+            Returns:
+                Dictionary with task_id and status information
+            """
+            return run_background(tool_name, tool_args, self)
+
+        # Register check_background tool
+        @tool(domain="background")
+        async def bg_check_background(task_id: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Check the status of background tasks.
+
+            Args:
+                task_id: Optional task ID to check. If None, returns all tasks.
+
+            Returns:
+                Dictionary with task status information or list of all tasks
+            """
+            return check_background(task_id, self)
+
+        # Register cancel_background tool
+        @tool(domain="background")
+        async def bg_cancel_background(task_id: str) -> Dict[str, Any]:
+            """
+            Cancel a running background task.
+
+            Args:
+                task_id: ID of the task to cancel
+
+            Returns:
+                Dictionary with cancellation status
+            """
+            return cancel_background(task_id, self)
+
+        # Register the background tools
+        self.tool_registry.register(bg_run_background)
+        self.tool_registry.register(bg_check_background)
+        self.tool_registry.register(bg_cancel_background)
+
+        self.logger.debug("Registered background task management tools")
+
     def register_tool(self, tool_func) -> None:
         """
         Register a custom tool to the registry.
@@ -391,6 +479,27 @@ class Agent:
 
         # Build messages for LLM
         messages = self._build_messages(query)
+
+        # Drain background task notifications and inject as user messages
+        if self.bg_manager:
+            notifications = self.bg_manager.drain_notifications()
+            if notifications:
+                notif_text = "\n".join(
+                    f"[bg:{n.task_id}] {n.status.value}: {chr(10).join(n.output_lines[-5:])}"
+                    if n.output_lines
+                    else f"[bg:{n.task_id}] {n.status.value}"
+                    for n in notifications
+                )
+                messages.append(
+                    LLMMessage(
+                        role="user",
+                        content=f"<background-results>\n{notif_text}\n</background-results>",
+                    )
+                )
+                self.logger.info(
+                    f"Injected {len(notifications)} background task notification(s)",
+                    session_id=self.session_id,
+                )
 
         iteration = 0
         max_iterations = self.config.max_tool_iterations
