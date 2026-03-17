@@ -7,7 +7,10 @@ Implements the core agent execution loop with tool calling.
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bioagent.agents.factory import SimpleAgentFactory
 
 from bioagent.config import BioAgentConfig
 from bioagent.state import AgentState, AgentStatus, ToolResult, LLMCall, Message
@@ -64,6 +67,13 @@ class Agent:
         self.loader = ToolLoader(self.tool_registry)
         self.tool_adapter: Optional[ToolAdapter] = None
         self._load_tools()
+
+        # Simple multi-agent factory
+        self.agent_factory: Optional["SimpleAgentFactory"] = None
+        if self.config.enable_multi_agent:
+            # Import here to avoid circular import
+            from bioagent.agents.factory import SimpleAgentFactory
+            self.agent_factory = SimpleAgentFactory(self.config, self.logger)
 
         # LLM Provider
         self.llm = get_llm_provider(self.config)
@@ -136,11 +146,21 @@ class Agent:
         Returns:
             Number of tools enabled
         """
+        count = 0
+
+        # Enable in core registry
+        registry_count = self.tool_registry.enable_domain(domain)
+        count += registry_count
+
+        # Enable in external adapter if available
         if self.tool_adapter:
-            count = self.tool_adapter.enable_domain(domain)
+            adapter_count = self.tool_adapter.enable_domain(domain)
+            count += adapter_count
+
+        if count > 0:
             self.logger.info(f"Enabled {count} tools in domain '{domain}'")
-            return count
-        return 0
+
+        return count
 
     def disable_tool_domain(self, domain: str) -> int:
         """
@@ -152,11 +172,21 @@ class Agent:
         Returns:
             Number of tools disabled
         """
+        count = 0
+
+        # Disable in core registry
+        registry_count = self.tool_registry.disable_domain(domain)
+        count += registry_count
+
+        # Disable in external adapter if available
         if self.tool_adapter:
-            count = self.tool_adapter.disable_domain(domain)
+            adapter_count = self.tool_adapter.disable_domain(domain)
+            count += adapter_count
+
+        if count > 0:
             self.logger.info(f"Disabled {count} tools in domain '{domain}'")
-            return count
-        return 0
+
+        return count
 
     def list_tool_domains(self) -> List[str]:
         """
@@ -179,9 +209,20 @@ class Agent:
         Returns:
             List of enabled ToolInfo objects
         """
+        # Get tools from core registry
+        tools = self.tool_registry.get_enabled_tools(domain=domain)
+
+        # Add tools from external adapter if available
         if self.tool_adapter:
-            return self.tool_adapter.get_enabled_tools(domain=domain)
-        return self.tool_registry.list_tools(domain=domain)
+            adapter_tools = self.tool_adapter.get_enabled_tools(domain=domain)
+            # Combine and deduplicate (by tool name)
+            tool_names = {t.name for t in tools}
+            for tool in adapter_tools:
+                if tool.name not in tool_names:
+                    tools.append(tool)
+                    tool_names.add(tool.name)
+
+        return tools
 
     async def execute(
         self,
@@ -206,6 +247,23 @@ class Agent:
 
         self.logger.log_state_transition("idle", "thinking", session_id=self.session_id)
 
+        # Check for multi-agent delegation based on task complexity
+        if self.agent_factory and self.agent_factory.should_delegate(query):
+            if self.config.log_delegation_decision:
+                self.logger.info(
+                    f"Task complexity warrants multi-agent delegation",
+                    session_id=self.session_id,
+                    query=query
+                )
+            # Create and execute multi-agent team
+            team = self.agent_factory.create_multi_agent_team()
+            result = await team.execute(query, context=context)
+            self.state.status = AgentStatus.COMPLETED
+            return result
+
+        # Apply smart domain filtering based on query
+        self._smart_domain_filter(query)
+
         # Build messages for LLM
         messages = self._build_messages(query)
 
@@ -214,6 +272,30 @@ class Agent:
 
         while iteration < max_iterations:
             iteration += 1
+
+            # Check for convergence or diminishing returns
+            if self._check_convergence() or self._has_diminishing_returns():
+                self.logger.info(
+                    "Stopping early due to convergence or diminishing returns",
+                    session_id=self.session_id,
+                    iteration=iteration
+                )
+                # Generate final response from accumulated tool results
+                final_response = await self._generate_final_response()
+                self.state.status = AgentStatus.COMPLETED
+                return final_response
+
+            # Check for early exit condition
+            if self._should_early_exit(iteration):
+                self.logger.info(
+                    "Early exit condition met",
+                    session_id=self.session_id,
+                    iteration=iteration
+                )
+                # Generate final response from accumulated tool results
+                final_response = await self._generate_final_response()
+                self.state.status = AgentStatus.COMPLETED
+                return final_response
 
             # Call LLM
             self.state.status = AgentStatus.THINKING
@@ -281,6 +363,14 @@ class Agent:
             self.state.status = AgentStatus.EXECUTING_TOOL
 
             for tool_call in response.tool_calls:
+                # Check for redundant tool calls
+                if self._is_redundant_call(tool_call.name, tool_call.arguments):
+                    self.logger.warning(
+                        f"Skipping redundant tool call: {tool_call.name}",
+                        session_id=self.session_id
+                    )
+                    continue
+
                 # Add tool call to messages
                 messages.append(LLMMessage(
                     role="user",
@@ -312,7 +402,8 @@ class Agent:
                     success=success,
                     result=result,
                     error=error,
-                    duration_ms=duration
+                    duration_ms=duration,
+                    tool_args=tool_call.arguments
                 )
                 self.state.add_tool_result(tool_result)
 
@@ -378,6 +469,193 @@ class Agent:
             "costs": self.state.get_cost_summary(),
             "metrics": self.metrics.get_summary() if self.metrics else None
         }
+
+    def _check_convergence(self) -> bool:
+        """检测工具调用是否收敛"""
+        if not self.config.enable_convergence_detection:
+            return False
+
+        if len(self.state.tool_results) < self.config.convergence_min_results:
+            return False
+
+        # 检查最近N次工具调用是否重复
+        recent_tools = [r.tool_name for r in self.state.tool_results[-self.config.convergence_same_tool_calls:]]
+        if len(set(recent_tools)) == 1:
+            self.logger.info(
+                f"Convergence detected: {self.config.convergence_same_tool_calls} "
+                f"consecutive calls to {recent_tools[0]}",
+                session_id=self.session_id
+            )
+            return True
+
+        return False
+
+    def _has_diminishing_returns(self) -> bool:
+        """检测收益递减"""
+        if not self.config.enable_convergence_detection:
+            return False
+
+        if len(self.state.tool_results) < 5:
+            return False
+
+        # 检查最近结果是否包含新信息
+        recent_contents = [str(r.content) for r in self.state.tool_results[-5:] if r.success]
+        if len(recent_contents) == 0:
+            return False
+
+        unique_content = len(set(recent_contents))
+        ratio = unique_content / len(recent_contents)
+
+        if ratio < self.config.convergence_unique_content_ratio:
+            self.logger.info(
+                f"Diminishing returns detected: {ratio:.2f} unique content ratio",
+                session_id=self.session_id
+            )
+            return True
+
+        return False
+
+    def _score_tool_relevance(self, query: str, tool_name: str) -> float:
+        """评分工具相关性"""
+        if not self.config.enable_tool_relevance_scoring:
+            return 1.0  # 默认相关性
+
+        query_lower = query.lower()
+        query_keywords = query_lower.split()
+
+        # 基于关键词匹配
+        tool_descriptions = {
+            "query_uniprot": ["protein", "uniprot", "structure", "function", "sequence", "annotation"],
+            "query_gene": ["gene", "ontology", "function", "go", "gene", "dna", "rna"],
+            "query_pubmed": ["literature", "paper", "research", "study", "publication", "article"],
+            "run_python_code": ["analyze", "calculate", "process", "plot", "visualize"],
+            "read_file": ["file", "data", "document", "text", "content"],
+            "write_file": ["file", "save", "write", "export", "store"]
+        }
+
+        if tool_name in tool_descriptions:
+            score = sum(1 for kw in query_keywords if kw in tool_descriptions[tool_name])
+            return score / len(query_keywords)
+
+        return 0.0
+
+    def _smart_domain_filter(self, query: str) -> None:
+        """根据查询智能过滤工具领域"""
+        if not self.config.enable_smart_domain_filter:
+            return
+
+        query_lower = query.lower()
+
+        # Get all available domains from the tools
+        all_domains = set()
+        for tool in self.tool_registry.list_tools():
+            all_domains.add(tool.domain)
+
+        # TP53 基因功能查询 - 只需要数据库工具
+        if any(word in query_lower for word in ["基因", "function", "gene", "protein", "uniprot", "go"]):
+            # Enable database tools
+            domains_to_disable = all_domains - {"database"}
+            for domain in domains_to_disable:
+                try:
+                    self.disable_tool_domain(domain)
+                except:
+                    pass  # Domain might not exist
+            self.logger.info("Applied domain filter for gene/protein query", session_id=self.session_id)
+
+        # 文献调研查询 - 需要数据库工具（PubMed）
+        elif any(word in query_lower for word in ["文献", "research", "paper", "pubmed", "study"]):
+            # Enable only literature/database tools
+            domains_to_disable = all_domains - {"database"}
+            for domain in domains_to_disable:
+                try:
+                    self.disable_tool_domain(domain)
+                except:
+                    pass  # Domain might not exist
+            self.logger.info("Applied domain filter for literature query", session_id=self.session_id)
+
+        # 数据分析查询 - 需要分析和文件工具
+        elif any(word in query_lower for word in ["analyze", "data", "plot", "calculate", "process"]):
+            # Enable analysis and files tools
+            domains_to_disable = all_domains - {"analysis", "files"}
+            for domain in domains_to_disable:
+                try:
+                    self.disable_tool_domain(domain)
+                except:
+                    pass  # Domain might not exist
+            self.logger.info("Applied domain filter for analysis query", session_id=self.session_id)
+
+    def _is_redundant_call(self, tool_name: str, tool_args: dict) -> bool:
+        """检查是否为冗余调用"""
+        if not self.config.enable_tool_deduplication:
+            return False
+
+        # 检查最近N次调用
+        recent_calls = self.state.tool_results[-5:]
+        for call in recent_calls:
+            if (call.tool_name == tool_name and
+                call.success and
+                self._similar_arguments(call.tool_args, tool_args)):
+                return True
+        return False
+
+    def _similar_arguments(self, args1: dict, args2: dict) -> bool:
+        """检查参数是否相似"""
+        # 简单实现：检查所有键值对是否相同
+        # 可以根据实际工具参数类型进行更精细的比较
+        return args1 == args2
+
+    def _should_early_exit(self, iteration: int) -> bool:
+        """检查是否应该提前退出"""
+        # 检查是否满足早期退出条件
+        if iteration >= self.config.max_early_exit_iterations:
+            # 检查最近几次工具调用的成功率
+            recent_results = self.state.tool_results[-self.config.max_early_exit_iterations:]
+            if all(r.success for r in recent_results):
+                return True
+        return False
+
+    async def _generate_final_response(self) -> str:
+        """根据工具结果生成最终响应"""
+        if not self.state.tool_results:
+            return "No relevant information found."
+
+        # 收集成功的结果
+        successful_results = [r for r in self.state.tool_results if r.success]
+
+        if not successful_results:
+            return "Failed to retrieve information from tools."
+
+        # 简单总结结果
+        summary = "Based on the retrieved information:\n\n"
+
+        for i, result in enumerate(successful_results, 1):
+            result_content = str(result.result)
+            if isinstance(result_content, dict):
+                if result_content:
+                    # 提取一些关键信息
+                    if "summary" in result_content:
+                        summary += f"{i}. {result_content['summary']}\n"
+                    elif "protein" in result_content:
+                        protein = result_content.get("protein", result_content)
+                        summary += f"{i}. {protein}\n"
+                    elif "gene" in result_content:
+                        gene = result_content.get("gene", result_content)
+                        summary += f"{i}. {gene}\n"
+                    else:
+                        summary += f"{i}. {result_content}\n"
+                else:
+                    summary += f"{i}. No additional details found.\n"
+            else:
+                summary += f"{i}. {result_content}\n"
+
+        # 如果有未成功的调用，记录下来
+        failed_results = [r for r in self.state.tool_results if not r.success]
+        if failed_results:
+            summary += "\nSome queries encountered issues:\n"
+            for fail in failed_results:
+                summary += f"- {fail.tool_name}: {fail.error}\n"
+
+        return summary.strip()
 
     def reset(self) -> None:
         """Reset the agent state for a new session."""

@@ -27,6 +27,7 @@ class ToolResult:
     result: Any
     error: Optional[str] = None
     duration_ms: float = 0.0
+    tool_args: Dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
 
 

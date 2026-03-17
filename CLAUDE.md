@@ -4,16 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**BioAgent v2.0 - Phase 2 Complete** 🎉
+**BioAgent v2.0 - Foundation Complete** 🎉
 
 BioAgent is a minimalist, modular biomedical AI agent framework built using Python (>=3.9). It implements a ReAct-style agent with tool calling capabilities, specialized for biomedical research tasks. The framework supports multiple LLM providers (OpenAI, Anthropic Claude, custom endpoints like Zhipu GLM).
 
-**Phase 2 Status: ✅ COMPLETED** (2026-03-17)
-- ✅ External Tool Integration (Biomni adapter)
-- ✅ Multi-Agent Team System
-- ✅ Unified API Interface
-- ✅ Comprehensive Testing (100% pass rate)
-- ✅ API Unification across all components
+**Completed Phases:**
+- ✅ **Phase 1** - Agent Loop, Tool Use, Configuration, Observability
+- ✅ **Phase 2** - Multi-Agent Teams, External Tool Integration
+- ✅ **Phase 3** - Automatic Multi-Agent Delegation
+
+**Roadmap:** See [BIOAGENT_ROADMAP.md](./BIOAGENT_ROADMAP.md) for the complete development plan with 10 phases.
 
 ## Development Commands
 
@@ -22,14 +22,7 @@ BioAgent is a minimalist, modular biomedical AI agent framework built using Pyth
 pip install -e .
 ```
 
-### Running Tests
-```bash
-python scripts/test_bioagent.py
-# Or using pytest:
-pytest tests/
-```
-
-### Linting and Formatting
+### Code Quality
 ```bash
 # Format code with Black
 black bioagent/
@@ -103,12 +96,13 @@ asyncio.run(main())
 - `CostTracker` for API cost calculation per model
 
 **Multi-Agent Teams** (`bioagent/agents/`)
-- Phase 2: Team-based agent composition patterns
 - `Team` - Abstract base class for agent teams
 - `SequentialTeam` - Sequential execution pattern
 - `HierarchicalTeam` - Supervisor/delegation pattern
 - `AgentAsToolTeam` - Agent-as-tool pattern
 - `SwarmTeam` - Handoff-based pattern
+- `TaskComplexityAnalyzer` - Analyze task complexity
+- `SimpleAgentFactory` - Create hierarchical teams
 
 ### State Management
 
@@ -159,7 +153,7 @@ Place new tool files in `bioagent/tools/core/` for core tools, or add new subdir
 | `read_file` | files | Read file contents |
 | `write_file` | files | Write content to file |
 
-## Phase 2: External Tool Integration
+## Multi-Agent Teams & External Tools
 
 ### Tool Adapter System (`bioagent/tools/adapter.py`)
 
@@ -287,14 +281,36 @@ Optional:
 - `BIOAGENT_LOG_LEVEL` - Logging level (default: `INFO`)
 - `BIOAGENT_MAX_TOOL_ITERATIONS` - Max tool loops (default: `10`)
 
-Phase 2 - Biomni Integration:
+Biomni Integration:
 - `BIOAGENT_ENABLE_BIOMNI` - Enable Biomni tools (default: false)
 - `BIOAGENT_BIOMNI_PATH` - Path to Biomni installation
 - `BIOAGENT_BIOMNI_DOMAINS` - Comma-separated domains to load (e.g., "genetics,genomics")
 
-Phase 2 - Multi-Agent:
+Multi-Agent:
 - `BIOAGENT_ENABLE_MULTI_AGENT` - Enable multi-agent mode (default: false)
 - `BIOAGENT_AGENT_TEAM_MODE` - Team mode: "single", "sequential", "hierarchical", "swarm", "agent_as_tool"
+
+### Automatic Multi-Agent Delegation
+
+BioAgent automatically determines whether to use multiple agents based on task complexity.
+
+**Task Complexity Factors:**
+- Query length (longer = more complex)
+- Multiple tool domains needed (database + analysis + files)
+- Complexity keywords (analyze, compare, integrate, then, after)
+
+**Configuration:**
+```python
+config = BioAgentConfig.from_env()
+config.enable_multi_agent = True
+config.multi_agent_auto_delegate = True
+config.auto_delegate_threshold = 0.5  # 0-1, higher = only very complex tasks
+```
+
+**Environment Variables:**
+- `BIOAGENT_MULTI_AGENT_AUTO_DELEGATE` - Enable automatic delegation (default: true)
+- `BIOAGENT_AUTO_DELEGATE_THRESHOLD` - Complexity threshold (0-1, default: 0.5)
+- `BIOAGENT_LOG_DELEGATION_DECISION` - Log delegation decisions (default: true)
 
 ## LLM Provider Selection
 
@@ -305,21 +321,13 @@ The framework automatically selects the LLM provider:
 
 This allows using OpenAI-compatible APIs (like Zhipu GLM) by setting the base_url.
 
-## Testing
+## Future Development
 
-The test suite (`scripts/test_bioagent.py`) covers:
-- `@tool` decorator functionality
-- ToolRegistry operations
-- ToolLoader scanning
-- Observability (logger, metrics, cost tracking)
-- Configuration loading
-- Core tool execution
-
-Phase 2 tests (`tests/test_phase2.py`) cover:
-- ToolAdapter functionality
-- BiomniToolAdapter integration
-- Domain enable/disable
-- SequentialTeam execution
-- Configuration loading with new options
-
-Run tests before committing changes.
+See [BIOAGENT_ROADMAP.md](./BIOAGENT_ROADMAP.md) for the complete development plan including:
+- Phase 4: Task System
+- Phase 5: Background Tasks
+- Phase 6: Context Management
+- Phase 7: Advanced Team Protocols
+- Phase 8: Worktree Isolation
+- Phase 9: Web UI
+- Phase 10: Code Evolution

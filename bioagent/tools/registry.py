@@ -17,6 +17,8 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: Dict[str, ToolInfo] = {}
+        self._disabled_domains: Set[str] = set()
+        self._disabled_tools: Set[str] = set()
 
     def register(self, func: Callable) -> None:
         """
@@ -91,9 +93,18 @@ class ToolRegistry:
         Returns:
             List of ToolInfo objects
         """
-        tools = list(self._tools.values())
-        if domain:
-            tools = [t for t in tools if t.domain == domain]
+        tools = []
+        for tool in self._tools.values():
+            # Skip disabled tools
+            if tool.name in self._disabled_tools:
+                continue
+
+            # Filter by domain if specified
+            if domain:
+                if tool.domain == domain:
+                    tools.append(tool)
+            else:
+                tools.append(tool)
         return tools
 
     def list_tool_names(self, domain: Optional[str] = None) -> List[str]:
@@ -107,6 +118,77 @@ class ToolRegistry:
             List of tool name strings
         """
         return [t.name for t in self.list_tools(domain)]
+
+    def enable_domain(self, domain: str) -> int:
+        """
+        Enable all tools in a domain.
+
+        Args:
+            domain: Domain name to enable
+
+        Returns:
+            Number of tools enabled
+        """
+        if domain in self._disabled_domains:
+            self._disabled_domains.remove(domain)
+            # Re-enable tools in this domain
+            count = 0
+            for tool_name, tool in self._tools.items():
+                if tool.domain == domain and tool_name in self._disabled_tools:
+                    self._disabled_tools.remove(tool_name)
+                    count += 1
+            return count
+        return 0
+
+    def disable_domain(self, domain: str) -> int:
+        """
+        Disable all tools in a domain.
+
+        Args:
+            domain: Domain name to disable
+
+        Returns:
+            Number of tools disabled
+        """
+        count = 0
+        if domain not in self._disabled_domains:
+            self._disabled_domains.add(domain)
+            # Disable all tools in this domain
+            for tool_name, tool in self._tools.items():
+                if tool.domain == domain and tool_name not in self._disabled_tools:
+                    self._disabled_tools.add(tool_name)
+                    count += 1
+        return count
+
+    def list_tool_domains(self) -> List[str]:
+        """
+        List all available tool domains.
+
+        Returns:
+            List of domain names
+        """
+        domains = set()
+        for tool in self._tools.values():
+            domains.add(tool.domain)
+        return sorted(list(domains))
+
+    def get_enabled_tools(self, domain: Optional[str] = None) -> List[ToolInfo]:
+        """
+        Get list of enabled tools.
+
+        Args:
+            domain: Optional filter by domain
+
+        Returns:
+            List of enabled ToolInfo objects
+        """
+        tools = []
+        for tool in self._tools.values():
+            # Check if tool is not disabled
+            if (tool.name not in self._disabled_tools and
+                (domain is None or tool.domain == domain)):
+                tools.append(tool)
+        return tools
 
     def to_openai_format(self, domain: Optional[str] = None) -> List[Dict]:
         """
@@ -139,8 +221,12 @@ class ToolRegistry:
             Result from the tool function
 
         Raises:
-            ValueError: If tool not found
+            ValueError: If tool not found or disabled
         """
+        # Check if tool is disabled
+        if name in self._disabled_tools:
+            raise ValueError(f"Tool is disabled: {name}")
+
         tool_info = self.get_tool(name)
         if tool_info is None:
             raise ValueError(f"Tool not found: {name}")

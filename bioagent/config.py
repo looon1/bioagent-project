@@ -53,6 +53,26 @@ class BioAgentConfig:
     max_tool_iterations: int = 10
     max_message_history: int = 100
 
+    # Efficiency optimization settings
+    enable_convergence_detection: bool = True
+    enable_tool_relevance_scoring: bool = True
+    enable_smart_domain_filter: bool = True
+    enable_tool_deduplication: bool = True
+
+    # Convergence thresholds
+    convergence_same_tool_calls: int = 3  # Number of same tool calls to detect convergence
+    convergence_min_results: int = 3     # Minimum results before checking convergence
+    convergence_unique_content_ratio: float = 0.6  # Ratio of unique content needed (e.g., 0.6 = 60%)
+
+    # Tool scoring settings
+    min_relevance_score: float = 0.3     # Minimum relevance score to use a tool
+    max_early_exit_iterations: int = 5    # Early exit for simple queries after this many iterations
+
+    # Multi-Agent Delegation Configuration
+    multi_agent_auto_delegate: bool = True      # Automatically delegate complex tasks
+    auto_delegate_threshold: int = 0.5          # Complexity score threshold (0-1)
+    log_delegation_decision: bool = True       # Log delegation decisions
+
     @classmethod
     def from_env(cls) -> "BioAgentConfig":
         """Load configuration from environment variables."""
@@ -99,10 +119,46 @@ class BioAgentConfig:
         if max_iterations := os.getenv("BIOAGENT_MAX_TOOL_ITERATIONS"):
             config.max_tool_iterations = int(max_iterations)
 
+        # Efficiency settings
+        if convergence_detection := os.getenv("BIOAGENT_ENABLE_CONVERGENCE_DETECTION"):
+            config.enable_convergence_detection = convergence_detection.lower() in ("true", "1", "yes")
+        if relevance_scoring := os.getenv("BIOAGENT_ENABLE_TOOL_RELEVANCE_SCORING"):
+            config.enable_tool_relevance_scoring = relevance_scoring.lower() in ("true", "1", "yes")
+        if smart_filter := os.getenv("BIOAGENT_ENABLE_SMART_DOMAIN_FILTER"):
+            config.enable_smart_domain_filter = smart_filter.lower() in ("true", "1", "yes")
+        if tool_deduplication := os.getenv("BIOAGENT_ENABLE_TOOL_DEDUPLICATION"):
+            config.enable_tool_deduplication = tool_deduplication.lower() in ("true", "1", "yes")
+
+        # Convergence thresholds
+        if same_calls := os.getenv("BIOAGENT_CONVERGENCE_SAME_TOOL_CALLS"):
+            config.convergence_same_tool_calls = int(same_calls)
+        if min_results := os.getenv("BIOAGENT_CONVERGENCE_MIN_RESULTS"):
+            config.convergence_min_results = int(min_results)
+        if unique_ratio := os.getenv("BIOAGENT_CONVERGENCE_UNIQUE_CONTENT_RATIO"):
+            config.convergence_unique_content_ratio = float(unique_ratio)
+
+        # Tool scoring settings
+        if min_score := os.getenv("BIOAGENT_MIN_RELEVANCE_SCORE"):
+            config.min_relevance_score = float(min_score)
+        if max_exit := os.getenv("BIOAGENT_MAX_EARLY_EXIT_ITERATIONS"):
+            config.max_early_exit_iterations = int(max_exit)
+
+        # Multi-agent delegation settings
+        if auto_delegate := os.getenv("BIOAGENT_MULTI_AGENT_AUTO_DELEGATE"):
+            config.multi_agent_auto_delegate = auto_delegate.lower() in ("true", "1", "yes")
+        if threshold := os.getenv("BIOAGENT_AUTO_DELEGATE_THRESHOLD"):
+            config.auto_delegate_threshold = float(threshold)
+        if log_decision := os.getenv("BIOAGENT_LOG_DELEGATION_DECISION"):
+            config.log_delegation_decision = log_decision.lower() in ("true", "1", "yes")
+
         return config
 
     def validate(self) -> None:
         """Validate configuration and raise errors if invalid."""
+        # Allow test mode for testing purposes
+        if os.getenv("BIOAGENT_TEST_MODE"):
+            return
+
         # Require API key for Claude models without custom base URL
         if not self.api_key and "claude" in self.model.lower() and not self.base_url:
             raise ValueError("ANTHROPIC_API_KEY is required for Claude models")

@@ -11,11 +11,15 @@ from bioagent.agents.team import (
     AgentAsToolTeam,
     SwarmTeam
 )
+from bioagent.agents.analyzer import TaskComplexityAnalyzer
+from bioagent.agents.factory import SimpleAgentFactory
 
 __all__ = [
     "Team",
     "SequentialTeam",
     "HierarchicalTeam",
     "AgentAsToolTeam",
-    "SwarmTeam"
+    "SwarmTeam",
+    "TaskComplexityAnalyzer",
+    "SimpleAgentFactory"
 ]
