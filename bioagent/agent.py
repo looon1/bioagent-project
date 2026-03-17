@@ -102,6 +102,11 @@ class Agent:
         if self.config.enable_worktree:
             self._load_worktree_system()
 
+        # Evolution system (Phase 10)
+        self.evolution_engine: Optional[Any] = None
+        if self.config.enable_evolution:
+            self._load_evolution_system()
+
         # LLM Provider
         self.llm = get_llm_provider(self.config)
 
@@ -625,6 +630,240 @@ class Agent:
         self.tool_registry.register(wt_summary)
 
         self.logger.debug("Registered worktree management tools")
+
+    def _load_evolution_system(self) -> None:
+        """Initialize evolution system if enabled."""
+        try:
+            # Import evolution components
+            from bioagent.evolution.engine import EvolutionEngine
+            from bioagent.evolution.models import EvolutionStatus
+
+            # Evolution configuration
+            evolution_config = {
+                "max_generations": self.config.evolution_max_generations,
+                "population_size": self.config.evolution_population_size,
+                "grid_resolution": self.config.evolution_grid_resolution,
+                "mutation_rate": self.config.evolution_mutation_rate,
+                "crossover_rate": self.config.evolution_crossover_rate,
+                "functional_weight": self.config.evolution_functional_weight,
+                "llm_weight": self.config.evolution_llm_weight,
+                "checkpoint_interval": self.config.evolution_checkpoint_interval,
+                "max_checkpoints": self.config.evolution_max_checkpoints,
+                "evolution_dir": str(self.config.evolution_dir),
+            }
+
+            # Initialize engine (will be created when needed)
+            self.evolution_engine = None
+
+            # Register evolution tools
+            self._register_evolution_tools()
+
+            self.logger.info(
+                "Evolution system initialized",
+                evolution_dir=str(self.config.evolution_dir),
+                max_generations=self.config.evolution_max_generations,
+            )
+
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize evolution system: {e}")
+            self.evolution_engine = None
+
+    def _register_evolution_tools(self) -> None:
+        """Register evolution management tools."""
+        from bioagent.tools.base import tool
+        from bioagent.evolution import tools as evolution_tools
+
+        # Register start_evolution tool
+        @tool(domain="evolution")
+        async def ev_start_evolution(
+            tool_name: str,
+            base_code: str,
+            max_generations: Optional[int] = None,
+            population_size: Optional[int] = None,
+            grid_resolution: Optional[int] = None,
+            mutation_rate: Optional[float] = None,
+            test_cases: Optional[List[Dict]] = None,
+            run_async: bool = False,
+        ) -> Dict[str, Any]:
+            """
+            Start a new evolution run for a tool.
+
+            Use this tool to evolve and improve tool implementations using MAP-Elites
+            quality-diversity optimization and hybrid evaluation.
+
+            Args:
+                tool_name: Name of the tool to evolve
+                base_code: Starting Python code for the tool
+                max_generations: Maximum number of generations (default: 50)
+                population_size: Number of variants per generation (default: 20)
+                grid_resolution: MAP-Elites grid resolution (default: 10)
+                mutation_rate: Probability of mutation (0-1, default: 0.3)
+                test_cases: Optional list of test case dicts with "input" and "expected"
+                run_async: Run evolution in background (default: False)
+
+            Returns:
+                Dictionary with evolution run ID and initial status
+            """
+            return evolution_tools.start_evolution(
+                tool_name=tool_name,
+                base_code=base_code,
+                max_generations=max_generations or self.config.evolution_max_generations,
+                population_size=population_size or self.config.evolution_population_size,
+                grid_resolution=grid_resolution or self.config.evolution_grid_resolution,
+                mutation_rate=mutation_rate or self.config.evolution_mutation_rate,
+                test_cases=test_cases,
+                run_async=run_async,
+                agent=self,
+            )
+
+        # Register evolve_tool tool
+        @tool(domain="evolution")
+        async def ev_evolve_tool(
+            tool_name: str,
+            max_generations: Optional[int] = None,
+            population_size: Optional[int] = None,
+        ) -> Dict[str, Any]:
+            """
+            Evolve a specific tool using its current code.
+
+            This tool extracts the current code for a tool and evolves it.
+
+            Args:
+                tool_name: Name of the tool to evolve
+                max_generations: Maximum number of generations (default: 50)
+                population_size: Number of variants per generation (default: 20)
+
+            Returns:
+                Dictionary with evolution results
+            """
+            return evolution_tools.evolve_tool(
+                tool_name=tool_name,
+                max_generations=max_generations or self.config.evolution_max_generations,
+                population_size=population_size or self.config.evolution_population_size,
+                agent=self,
+            )
+
+        # Register get_evolution_status tool
+        @tool(domain="evolution")
+        async def ev_get_evolution_status(
+            run_id: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            """
+            Get status of evolution runs.
+
+            Args:
+                run_id: Optional specific run ID to check
+
+            Returns:
+                Dictionary with evolution status information
+            """
+            return evolution_tools.get_evolution_status(run_id, self)
+
+        # Register pause_evolution tool
+        @tool(domain="evolution")
+        async def ev_pause_evolution(run_id: str) -> Dict[str, Any]:
+            """
+            Pause an active evolution run.
+
+            Args:
+                run_id: ID of the evolution run to pause
+
+            Returns:
+                Status message
+            """
+            return evolution_tools.pause_evolution(run_id)
+
+        # Register resume_evolution tool
+        @tool(domain="evolution")
+        async def ev_resume_evolution(run_id: str) -> Dict[str, Any]:
+            """
+            Resume a paused evolution run.
+
+            Args:
+                run_id: ID of the evolution run to resume
+
+            Returns:
+                Status message
+            """
+            return evolution_tools.resume_evolution(run_id)
+
+        # Register get_evolved_tool tool
+        @tool(domain="evolution")
+        async def ev_get_evolved_tool(
+            run_id: str,
+            get_best: bool = True,
+            top_k: Optional[int] = None,
+        ) -> Dict[str, Any]:
+            """
+            Get evolved tool code from an evolution run.
+
+            Args:
+                run_id: ID of the evolution run
+                get_best: If True, return only the best solution (default: True)
+                top_k: If specified, return top k elite solutions
+
+            Returns:
+                Dictionary with evolved tool code and metadata
+            """
+            return evolution_tools.get_evolved_tool(run_id, get_best, top_k)
+
+        # Register list_evolution_runs tool
+        @tool(domain="evolution")
+        async def ev_list_evolution_runs() -> Dict[str, Any]:
+            """
+            List all evolution runs (active and completed).
+
+            Returns:
+                Dictionary with evolution run information
+            """
+            return evolution_tools.list_evolution_runs(self)
+
+        # Register promote_evolved_tool tool
+        @tool(domain="evolution")
+        async def ev_promote_evolved_tool(
+            run_id: str,
+            rank: int = 1,
+        ) -> Dict[str, Any]:
+            """
+            Promote an evolved tool to the agent's tool registry.
+
+            Args:
+                run_id: ID of the evolution run
+                rank: Rank of solution to promote (1 = best)
+
+            Returns:
+                Status message
+            """
+            return evolution_tools.promote_evolved_tool(run_id, rank, self)
+
+        # Register clear_evolution_cache tool
+        @tool(domain="evolution")
+        async def ev_clear_evolution_cache(
+            run_id: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            """
+            Clear evolution engine cache.
+
+            Args:
+                run_id: Optional specific run ID to clear
+
+            Returns:
+                Status message
+            """
+            return evolution_tools.clear_evolution_cache(run_id)
+
+        # Register the evolution tools
+        self.tool_registry.register(ev_start_evolution)
+        self.tool_registry.register(ev_evolve_tool)
+        self.tool_registry.register(ev_get_evolution_status)
+        self.tool_registry.register(ev_pause_evolution)
+        self.tool_registry.register(ev_resume_evolution)
+        self.tool_registry.register(ev_get_evolved_tool)
+        self.tool_registry.register(ev_list_evolution_runs)
+        self.tool_registry.register(ev_promote_evolved_tool)
+        self.tool_registry.register(ev_clear_evolution_cache)
+
+        self.logger.debug("Registered evolution management tools")
 
     def register_tool(self, tool_func) -> None:
         """
@@ -1247,6 +1486,31 @@ class Agent:
         summary["git_available"] = self.worktree_manager.git_available
 
         return summary
+
+    def get_evolution_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of evolution runs.
+
+        Returns:
+            Dictionary with evolution statistics and enabled status
+        """
+        if not self.config.enable_evolution:
+            return {
+                "enabled": False,
+                "message": "Evolution system is not enabled"
+            }
+
+        from bioagent.evolution.tools import list_evolution_runs
+        runs = list_evolution_runs(self)
+
+        return {
+            "enabled": True,
+            "evolution_dir": str(self.config.evolution_dir),
+            "max_generations": self.config.evolution_max_generations,
+            "population_size": self.config.evolution_population_size,
+            "grid_resolution": self.config.evolution_grid_resolution,
+            **runs,
+        }
 
     def create_agent_task(
         self,

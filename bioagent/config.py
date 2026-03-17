@@ -115,6 +115,22 @@ class BioAgentConfig:
     enable_cors: bool = True                     # Enable CORS for frontend
     sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".sessions")  # Web session storage
 
+    # Evolution Configuration (Phase 10)
+    enable_evolution: bool = False              # Enable code evolution system
+    evolution_dir: Path = field(default_factory=lambda: Path.cwd() / ".evolution")  # Evolution storage
+    evolution_max_generations: int = 50        # Max generations per run
+    evolution_population_size: int = 20         # Population size
+    evolution_grid_resolution: int = 10        # MAP-Elites grid resolution
+    evolution_mutation_rate: float = 0.3        # Mutation probability (0-1)
+    evolution_crossover_rate: float = 0.5        # Crossover probability (0-1)
+    evolution_functional_weight: float = 0.6       # Weight for functional tests
+    evolution_llm_weight: float = 0.4             # Weight for LLM quality
+    evolution_checkpoint_interval: int = 5       # Generations per checkpoint
+    evolution_max_checkpoints: int = 10          # Max checkpoints to keep
+    evolution_resume_from: Optional[str] = None  # Checkpoint to resume from
+    evolution_target_tools: Optional[list] = None  # Tools to evolve
+    evolution_test_cases: Optional[list] = None    # Test cases for evaluation
+
     @classmethod
     def from_env(cls) -> "BioAgentConfig":
         """Load configuration from environment variables."""
@@ -266,6 +282,34 @@ class BioAgentConfig:
         if sessions_dir := os.getenv("BIOAGENT_SESSIONS_DIR"):
             config.sessions_dir = Path(sessions_dir)
 
+        # Evolution settings
+        if enable_evolution := os.getenv("BIOAGENT_ENABLE_EVOLUTION"):
+            config.enable_evolution = enable_evolution.lower() in ("true", "1", "yes")
+        if evolution_dir := os.getenv("BIOAGENT_EVOLUTION_DIR"):
+            config.evolution_dir = Path(evolution_dir)
+        if max_gen := os.getenv("BIOAGENT_EVOLUTION_MAX_GENERATIONS"):
+            config.evolution_max_generations = int(max_gen)
+        if pop_size := os.getenv("BIOAGENT_EVOLUTION_POPULATION_SIZE"):
+            config.evolution_population_size = int(pop_size)
+        if grid_res := os.getenv("BIOAGENT_EVOLUTION_GRID_RESOLUTION"):
+            config.evolution_grid_resolution = int(grid_res)
+        if mutation_rate := os.getenv("BIOAGENT_EVOLUTION_MUTATION_RATE"):
+            config.evolution_mutation_rate = float(mutation_rate)
+        if crossover_rate := os.getenv("BIOAGENT_EVOLUTION_CROSSOVER_RATE"):
+            config.evolution_crossover_rate = float(crossover_rate)
+        if func_weight := os.getenv("BIOAGENT_EVOLUTION_FUNCTIONAL_WEIGHT"):
+            config.evolution_functional_weight = float(func_weight)
+        if llm_weight := os.getenv("BIOAGENT_EVOLUTION_LLM_WEIGHT"):
+            config.evolution_llm_weight = float(llm_weight)
+        if checkpoint_interval := os.getenv("BIOAGENT_EVOLUTION_CHECKPOINT_INTERVAL"):
+            config.evolution_checkpoint_interval = int(checkpoint_interval)
+        if max_checkpoints := os.getenv("BIOAGENT_EVOLUTION_MAX_CHECKPOINTS"):
+            config.evolution_max_checkpoints = int(max_checkpoints)
+        if resume_from := os.getenv("BIOAGENT_EVOLUTION_RESUME_FROM"):
+            config.evolution_resume_from = resume_from
+        if target_tools := os.getenv("BIOAGENT_EVOLUTION_TARGET_TOOLS"):
+            config.evolution_target_tools = [t.strip() for t in target_tools.split(",")]
+
         return config
 
     def validate(self) -> None:
@@ -303,6 +347,10 @@ class BioAgentConfig:
 
         # Create sessions directory for web UI
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create evolution directory if evolution is enabled
+        if self.enable_evolution:
+            self.evolution_dir.mkdir(parents=True, exist_ok=True)
 
         # Validate multi-agent mode
         if self.agent_team_mode != "single" and not self.enable_multi_agent:

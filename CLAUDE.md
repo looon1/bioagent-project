@@ -12,6 +12,13 @@ BioAgent is a minimalist, modular biomedical AI agent framework built using Pyth
 - ✅ **Phase 1** - Agent Loop, Tool Use, Configuration, Observability
 - ✅ **Phase 2** - Multi-Agent Teams, External Tool Integration
 - ✅ **Phase 3** - Automatic Multi-Agent Delegation
+- ✅ **Phase 4** - Task System
+- ✅ **Phase 5** - Background Tasks
+- ✅ **Phase 6** - Context Management
+- ✅ **Phase 7** - Advanced Team Protocols
+- ✅ **Phase 8** - Worktree Isolation
+- ✅ **Phase 9** - Web UI
+- ✅ **Phase 10** - Code Evolution
 
 **Roadmap:** See [BIOAGENT_ROADMAP.md](./BIOAGENT_ROADMAP.md) for the complete development plan with 10 phases.
 
@@ -312,6 +319,86 @@ config.auto_delegate_threshold = 0.5  # 0-1, higher = only very complex tasks
 - `BIOAGENT_AUTO_DELEGATE_THRESHOLD` - Complexity threshold (0-1, default: 0.5)
 - `BIOAGENT_LOG_DELEGATION_DECISION` - Log delegation decisions (default: true)
 
+## Code Evolution System (Phase 10)
+
+BioAgent Phase 10 implements a code evolution system inspired by PantheonOS, adapted for biomedical AI agents. The system enables automatic improvement and optimization of tools through quality-diversity optimization.
+
+**Core Features:**
+
+- **MAP-Elites Grid**: Quality-diversity optimization that maintains diverse solutions across a behavior space
+- **Hybrid Evaluation**: Combines functional tests with LLM-based code quality assessment
+- **Mutation Strategies**: Three approaches to generating code variants:
+  - Analyzer-Mutator: Two-stage analysis and mutation
+  - Code Rewriter: Direct LLM code rewriting
+  - Parameter Tuner: Hyperparameter optimization
+- **Checkpoint/Resume**: State persistence for long-running evolution experiments
+
+### Evolution Configuration
+
+Enable evolution in configuration:
+```python
+from bioagent.config import BioAgentConfig
+from bioagent.agent import Agent
+
+# Enable evolution system
+config = BioAgentConfig.from_env()
+config.enable_evolution = True
+config.evolution_max_generations = 50
+config.evolution_population_size = 20
+config.evolution_grid_resolution = 10
+
+agent = Agent(config=config)
+```
+
+### Evolution Tools
+
+When evolution is enabled, the agent gains access to evolution management tools:
+
+- `start_evolution`: Start a new evolution run for a tool
+- `evolve_tool`: Evolve a specific tool using its current code
+- `get_evolution_status`: Check progress of evolution runs
+- `pause_evolution`, `resume_evolution`: Lifecycle management
+- `get_evolved_tool`: Retrieve best evolved versions
+- `list_evolution_runs`: List all runs
+- `promote_evolved_tool`: Promote evolved version to tool registry
+
+### Evolution Environment Variables
+
+- `BIOAGENT_ENABLE_EVOLUTION` - Enable evolution system (default: false)
+- `BIOAGENT_EVOLUTION_DIR` - Directory for evolution storage (default: .evolution)
+- `BIOAGENT_EVOLUTION_MAX_GENERATIONS` - Max generations per run (default: 50)
+- `BIOAGENT_EVOLUTION_POPULATION_SIZE` - Population size (default: 20)
+- `BIOAGENT_EVOLUTION_GRID_RESOLUTION` - MAP-Elites grid resolution (default: 10)
+- `BIOAGENT_EVOLUTION_MUTATION_RATE` - Mutation probability (default: 0.3)
+- `BIOAGENT_EVOLUTION_CROSSOVER_RATE` - Crossover probability (default: 0.5)
+- `BIOAGENT_EVOLUTION_FUNCTIONAL_WEIGHT` - Weight for functional tests (default: 0.6)
+- `BIOAGENT_EVOLUTION_LLM_WEIGHT` - Weight for LLM quality (default: 0.4)
+- `BIOAGENT_EVOLUTION_CHECKPOINT_INTERVAL` - Generations per checkpoint (default: 5)
+- `BIOAGENT_EVOLUTION_MAX_CHECKPOINTS` - Max checkpoints to keep (default: 10)
+- `BIOAGENT_EVOLUTION_TARGET_TOOLS` - Tools to evolve (comma-separated)
+
+### Running Evolution
+
+Via agent query:
+```python
+result = await agent.execute(
+    "Evolve the query_uniprot tool to improve performance"
+)
+```
+
+Via Python API:
+```python
+from bioagent.evolution.tools import start_evolution
+
+result = start_evolution(
+    tool_name="my_tool",
+    base_code="def my_tool(): ...",
+    max_generations=50,
+    population_size=20,
+    agent=agent,
+)
+```
+
 ## LLM Provider Selection
 
 The framework automatically selects the LLM provider:
@@ -323,11 +410,16 @@ This allows using OpenAI-compatible APIs (like Zhipu GLM) by setting the base_ur
 
 ## Future Development
 
-See [BIOAGENT_ROADMAP.md](./BIOAGENT_ROADMAP.md) for the complete development plan including:
-- Phase 4: Task System
-- Phase 5: Background Tasks
-- Phase 6: Context Management
-- Phase 7: Advanced Team Protocols
-- Phase 8: Worktree Isolation
-- Phase 9: Web UI
-- Phase 10: Code Evolution
+All 10 planned phases are complete! See [BIOAGENT_ROADMAP.md](./BIOAGENT_ROADMAP.md) for details on each phase.
+
+The BioAgent framework now includes:
+- ✅ Agent Loop, Tool Use, Configuration, Observability (Phase 1)
+- ✅ Multi-Agent Teams, External Tool Integration (Phase 2)
+- ✅ Automatic Multi-Agent Delegation (Phase 3)
+- ✅ Task System (Phase 4)
+- ✅ Background Tasks (Phase 5)
+- ✅ Context Management (Phase 6)
+- ✅ Advanced Team Protocols (Phase 7)
+- ✅ Worktree Isolation (Phase 8)
+- ✅ Web UI (Phase 9)
+- ✅ Code Evolution (Phase 10)
