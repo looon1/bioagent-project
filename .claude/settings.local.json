@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__web-search-prime__web_search_prime",
+      "mcp__zread__search_doc",
+      "Bash(python tests/test_phase2.py:*)",
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(gh:*)",
+      "Bash(git init:*)",
+      "Bash(git config:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
